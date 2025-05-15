@@ -4,6 +4,9 @@
   let files: FileList | null = null
   let isAuthenticated = false
   let isLoading = false
+  // biome-ignore lint/style/useConst: <explanation>
+  let message = ''
+  let results: Array<{ name: string; phone: string; status: string; error?: string }> = []
 
   onMount(() => {
     // Listen for WhatsApp authentication status
@@ -17,25 +20,30 @@
   })
 
   async function handleFileUpload(): Promise<void> {
-    if (!files || files.length === 0) return
+    if (!files || files.length === 0 || !message.trim()) return
 
     isLoading = true
     try {
-      for (const file of files) {
-        const reader = new FileReader()
-        // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-        reader.onload = async (e: ProgressEvent<FileReader>) => {
-          const buffer = e.target?.result as ArrayBuffer
-          if (buffer) {
-            await window.electron.ipcRenderer.invoke('send-file', {
-              name: file.name,
-              type: file.type,
-              data: buffer
-            })
+      const file = files[0] // Only process first file
+      const reader = new FileReader()
+
+      reader.onload = async (e: ProgressEvent<FileReader>): Promise<void> => {
+        const buffer = e.target?.result as ArrayBuffer
+        if (buffer) {
+          const response = await window.electron.ipcRenderer.invoke('process-csv', {
+            data: buffer,
+            message: message.trim()
+          })
+
+          if (response.success) {
+            results = response.results
+          } else {
+            console.error('Error:', response.error)
           }
         }
-        reader.readAsArrayBuffer(file)
       }
+
+      reader.readAsArrayBuffer(file)
     } catch (error) {
       console.error('Error uploading file:', error)
     } finally {
@@ -53,28 +61,53 @@
     </div>
   {:else}
     <div class="upload-section">
-      <h2>Upload Files to WhatsApp</h2>
+      <h2>Mass Message Sender</h2>
+
+      <div class="message-input">
+        <textarea bind:value={message} placeholder="Enter your message here..." disabled={isLoading}
+        ></textarea>
+      </div>
+
       <div class="file-input-container">
-        <input type="file" id="file-upload" multiple bind:files disabled={isLoading} />
+        <input type="file" id="file-upload" accept=".csv" bind:files disabled={isLoading} />
         <label for="file-upload" class="file-label">
           {#if files && files.length > 0}
-            {files.length} file(s) selected
+            {files[0].name}
           {:else}
-            Choose files
+            Choose CSV file
           {/if}
         </label>
       </div>
+
       <button
         on:click={handleFileUpload}
-        disabled={!files || files.length === 0 || isLoading}
+        disabled={!files || files.length === 0 || !message.trim() || isLoading}
         class="upload-button"
       >
         {#if isLoading}
-          Uploading...
+          Sending Messages...
         {:else}
-          Upload Files
+          Send Messages
         {/if}
       </button>
+
+      {#if results.length > 0}
+        <div class="results">
+          <h3>Results</h3>
+          <div class="results-grid">
+            {#each results as result}
+              <div class="result-item {result.status}">
+                <strong>{result.name}</strong>
+                <span>{result.phone}</span>
+                <span class="status">{result.status}</span>
+                {#if result.error}
+                  <span class="error">{result.error}</span>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
     </div>
   {/if}
 </main>
@@ -136,5 +169,56 @@
   .upload-button:disabled {
     background-color: #92e3ad;
     cursor: not-allowed;
+  }
+
+  .message-input {
+    margin: 2rem 0;
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 100px;
+    padding: 1rem;
+    border: 2px solid #e0e0e0;
+    border-radius: 4px;
+    resize: vertical;
+  }
+
+  .results {
+    margin-top: 2rem;
+    text-align: left;
+  }
+
+  .results-grid {
+    display: grid;
+    gap: 1rem;
+    margin-top: 1rem;
+  }
+
+  .result-item {
+    padding: 1rem;
+    border-radius: 4px;
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .result-item.success {
+    background-color: #e8f5e9;
+    border: 1px solid #81c784;
+  }
+
+  .result-item.failed {
+    background-color: #ffebee;
+    border: 1px solid #e57373;
+  }
+
+  .status {
+    font-weight: bold;
+    text-transform: capitalize;
+  }
+
+  .error {
+    color: #d32f2f;
+    font-size: 0.9em;
   }
 </style>
